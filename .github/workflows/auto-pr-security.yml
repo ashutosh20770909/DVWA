@@ -1,38 +1,69 @@
 name: Auto PR (DVWA security fixes)
+
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # run by button
   schedule: [{ cron: "14 5 * * 1" }]
+
 permissions:
   contents: write
   pull-requests: write
+
 jobs:
   autopatch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Semgrep
+
+      # Robust Python + Semgrep install
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Semgrep (robust)
         run: |
-          python3 -m pip install --upgrade pip
-          pip install semgrep
+          python -m pip install --upgrade pip
+          # --user + add to PATH avoids PEP 668 issues
+          pip install --user semgrep
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: 1
+        continue-on-error: true
+
+      # Report-only scan (won't fail the job)
       - name: Semgrep scan (report)
-        run: |
-          semgrep --config p/php --config p/owasp-top-ten \
-                  --json --output semgrep.json || true
+        run: semgrep --config p/php --config p/owasp-top-ten --json --output semgrep.json || true
+
+      # Autofix using your rules file (if present)
       - name: Semgrep autofix (targeted rules)
         if: hashFiles('.semgrep-fixes.yml') != ''
         run: semgrep --config .semgrep-fixes.yml --fix || true
+
+      # Fallback: simple search/replace to ensure a demo change even if Semgrep didn’t run
+      - name: Fallback patch (ensure at least one change)
+        run: |
+          shopt -s globstar || true
+          for f in **/*.php; do
+            [ -f "$f" ] || continue
+            sed -E -i "s/echo[[:space:]]+\$_GET\[(.+)\];/echo htmlspecialchars(\$_GET[\1], ENT_QUOTES, 'UTF-8');/g" "$f" || true
+          done
+
       - name: Attach scan report
         uses: actions/upload-artifact@v4
-        with: { name: semgrep-report, path: semgrep.json }
+        with:
+          name: semgrep-report
+          path: semgrep.json
+          if-no-files-found: ignore
+
       - name: Create security PR
         uses: peter-evans/create-pull-request@v6
         with:
           branch: security/auto-fix
+          commit-message: "chore(security): automated fixes"
           title: "chore(security): automated fixes (DVWA)"
-          commit-message: "chore(security): semgrep autofix + report"
           body: |
             Automated PR:
-            - Semgrep scan (artifact attached)
-            - Targeted autofixes (XSS output-escaping, etc.)
+            - Semgrep scan (artifact attached if available)
+            - Auto-hardening for echoed request params (XSS)
             Review & merge if OK.
           labels: security, automated
