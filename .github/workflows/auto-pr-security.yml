@@ -1,0 +1,38 @@
+name: Auto PR (DVWA security fixes)
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "14 5 * * 1" }]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  autopatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install semgrep
+      - name: Semgrep scan (report)
+        run: |
+          semgrep --config p/php --config p/owasp-top-ten \
+                  --json --output semgrep.json || true
+      - name: Semgrep autofix (targeted rules)
+        if: hashFiles('.semgrep-fixes.yml') != ''
+        run: semgrep --config .semgrep-fixes.yml --fix || true
+      - name: Attach scan report
+        uses: actions/upload-artifact@v4
+        with: { name: semgrep-report, path: semgrep.json }
+      - name: Create security PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: security/auto-fix
+          title: "chore(security): automated fixes (DVWA)"
+          commit-message: "chore(security): semgrep autofix + report"
+          body: |
+            Automated PR:
+            - Semgrep scan (artifact attached)
+            - Targeted autofixes (XSS output-escaping, etc.)
+            Review & merge if OK.
+          labels: security, automated
