@@ -1,0 +1,9 @@
+rules:
+  - id: php-echo-get-xss-autofix
+    message: "Auto-escape echoed GET param (demo autofix)"
+    severity: WARNING
+    languages: [php]
+    pattern: |
+      echo [];
+    fix: |
+      echo htmlspecialchars([], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
